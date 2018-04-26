@@ -1,3 +1,10 @@
+'''
+combined from the former: 
+    model_evaluator.py
+    state_dict_wrapper.py
+author: Rui Fang
+'''
+
 import torch
 import torchvision
 import torch.nn.functional as F
@@ -99,7 +106,7 @@ class StateDictWrapper:
 
         return np.concatenate(list_params)
       
-    def transform_to_state_dict(self, param_array, cuda=False):
+    def transform_to_state_dict(self, param_array, cuda=True):
         """
         Transform 1D param_array to state_dict. 
         """
@@ -121,58 +128,4 @@ class StateDictWrapper:
 # wrapper.fit(state_dict, clear_buffers=True)
 # param_array = wrapper.transform_to_array(state_dict)
 # state_dict_new = wrapper.transform_to_state_dict(param_array)
-
-
-
-def param_load_from_checkpoint(src_path, swa=False, cuda=False, template=None):
-    
-    key = 'state_dict' if not swa else 'swa_state_dict'
-    configs = {'map_location': lambda storage, loc: storage} if not cuda else {}
-    
-    checkpt = torch.load(path, **configs)
-    if template is None:
-        template = StateDictWrapper()
-        template.fit(checkpt[key], clear_buffers=True)
-    param = template.transform_to_array(checkptp[key])
-    
-    return param, template
-    
-
-def param_batchload_from_checkpoints(src_path_list, swa=False, cuda=False, template=None):
-    
-    param_list = []
-    for i, path in enumerate(src_path_list):
-        print('loading and tranlating {}/{}...'.format(i+1, len(src_path_list)))
-        checkpt = torch.load(path, **configs)
-        param, template = param_load_from_checkpoint(path, swa, cuda, template)
-        param_list.append(p)
-    print('done')
-        
-    return param_list, template
-
-
-def param_save_as_statedict(template, param, dest_path):
-    
-    state_dict = template.transform_to_state_dict(param)
-    torch.save(state_dict, dest_path)
-    
-    return
-
-
-def param_savebatch_as_statedicts(template, param_list, dest_path_list):
-    
-    for i, (param, path) in enumerate(zip(param_list, dest_path_list)):
-        print('translating and saving {}/{}...'.format(i+1, len(param_list)))
-        param_save_as_statedict(template, param, path)
-    print('done')
-        
-    return
-
-
-def statedict_load(src_path, cuda=False):
-    
-    configs = {'map_location': lambda storage, loc: storage} if not cuda else {}
-    state_dict = torch.load(src_path, **configs)
-    
-    return state_dict
         

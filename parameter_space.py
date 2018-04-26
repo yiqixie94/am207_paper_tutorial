@@ -1,3 +1,9 @@
+'''
+some packaged methods for high-dimensional space analysis
+author: Yiqi Xie
+'''
+
+
 import os, sys
 import numpy as np
 
@@ -68,7 +74,7 @@ class DimReducedMesh:
         coords = np.vstack([self.x_mesh.reshape(-1), self.y_mesh.reshape(-1)]).T # dim=(ny*nx, 2)
         Vs = []
         for i, xy in enumerate(coords):
-            print('recovering {}/{}...'.format(i+1, len(coords)), end='\r')
+            print('\rrecovering {}/{}...'.format(i+1, len(coords)))
             Vs.append(self.plane.recv(xy)) # dim(ny*nx, N)
         print('done')
         return Vs
@@ -86,6 +92,11 @@ class RandomDirections:
         self.n = directions.shape[0]
 
     @classmethod
+    def from_npy(cls, path):
+        directions = np.load(path)
+        return cls(directions)
+
+    @classmethod
     def generate(cls, dim, n, batch=None, seed=None):
         if batch is None:
             batch = self.dim
@@ -101,23 +112,23 @@ class RandomDirections:
         mvns = []
         for i, s in enumerate(sizes):
             sys.stdout.flush()
-            print('processing dim batch {}/{}...'.format(i+1, len(sizes)), end='\r')
+            print('\rprocessing dim batch {}/{}...'.format(i+1, len(sizes)), end='')
             mean, cov = np.zeros(s), np.identity(s)
             mvns.append(np.random.multivariate_normal(mean, cov, n))
         print('done')
 
         mvns = np.hstack(mvns)
         for i in range(n):
-            print('normalizing direction {}/{}...'.format(i+1, n), end='\r')
+            print('\rnormalizing direction {}/{}...'.format(i+1, n), end='')
             norm = np.linalg.norm(mvns[i])
             mvns[i] /= norm
         print('done')
 
         return cls(mvns)
 
-    def spread(self, center, idir, dist_grid):
+    def spread(self, center, idir, distgrid):
         new_params = []
-        for t in dist_grid:
+        for t in distgrid:
             param = center + t * self.directions[idir]
             new_params.append(param)
         return new_params
