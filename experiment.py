@@ -82,19 +82,19 @@ def param_batchload_from_checkpoints(src_path_list, swa=False, cuda=False, templ
     return param_list, template
 
 
-def param_save_as_statedict(template, param, dest_path):
+def param_save_as_statedict(template, param, dest_path, cuda=False):
     
-    state_dict = template.transform_to_state_dict(param)
+    state_dict = template.transform_to_state_dict(param, cuda)
     torch.save(state_dict, dest_path)
     
     return
 
 
-def param_savebatch_as_statedicts(template, param_list, dest_path_list):
+def param_savebatch_as_statedicts(template, param_list, dest_path_list, cuda=False):
     
     for i, (param, path) in enumerate(zip(param_list, dest_path_list)):
         print('\rtranslating and saving {}/{}...'.format(i+1, len(param_list)), end='')
-        param_save_as_statedict(template, param, path)
+        param_save_as_statedict(template, param, path, cuda)
     print('done')
         
     return
