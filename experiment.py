@@ -1,5 +1,5 @@
 '''
-helper functions for experiment formalization and analysis
+helper functions for experiment formulation and analysis
 author: Yiqi Xie
 '''
 
