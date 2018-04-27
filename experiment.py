@@ -87,16 +87,20 @@ def perform_direction_scan(srcdir_path, destdir_path,
         f_list = [fname for fname in f_list if fname.startswith('dirscan')]
         igrid_list = [int(fname.rpartition('_')[2]) for fname in f_list]
         fpath_list = [os.path.join(subdir_path, fname) for fname in f_list]
+        ordered = sorted(zip(igrid_list, fpath_list), key=lambda x:x[0])
+        igrid_list = [x[0] for x in ordered]
+        fpath_list = [x[1] for x in ordered]
         
-        res_list = statedict_batchevaluate(fpath_list, evaluator, cuda, update_buffers)
-        res_list = [res_list[i] for i in igrid_list]
+        print('order check: {}'.format(igrid_list), end='\n\n')
+        
+        res_list = statedict_batchevaluate(fpath_list, evaluator, cuda, update_buffers, dest_path=None) # printout process
         res_list = np.array(res_list) # shape (ngrid, 4)
         
         i_direction = subdir_path.rpartition('_')[2]
         outpath = os.path.join(destdir_path, 'dirscan_direction_{idir}.npy'.format(idir=i_direction))
         np.save(outpath, res_list)
         
-        print()
+        print(end='\n\n')
     
     return destdir_path
 
@@ -111,7 +115,9 @@ def statedict_load(src_path, cuda=False):
     return state_dict
 
 
+
 def statedict_evaluate(src_path, evaluator, cuda=True, update_buffers=True):
+    '''load state dict from file and evluate'''
     
     state_dict = statedict_load(src_path, cuda)
     train_res, test_res = evaluator.evaluate(state_dict, update_buffers)
@@ -119,22 +125,45 @@ def statedict_evaluate(src_path, evaluator, cuda=True, update_buffers=True):
     return train_res['accuracy'], train_res['loss'], test_res['accuracy'], test_res['loss']
 
 
-def statedict_batchevaluate(src_path_list, evaluator, cuda=True, update_buffers=True):
+
+def statedict_batchevaluate(src_path_list, evaluator, cuda=True, update_buffers=True, dest_path=None):
+    '''load a batch of state dicts and evaluate,
+        by default the results will also be printed to screen'''
+        
+    columns = ['progress', 'train_acc', 'train_loss', 'test_acc', 'test_loss']
+    header = ['{:>12s}'.format(c) for c in columns]
+    header = ''.join(header) + '\n'
+    
+    if dest_path is not None:
+        with open(dest_path, 'w') as file:
+            file.write(header)
+    else:
+        sys.stdout.write(header)
     
     res_list = []
+    
     for i, path in enumerate(src_path_list):
-        print('\rloading and evaluating {}/{}...'\
-                 .format(i+1, len(src_path_list)), end='')
         train_acc, train_loss, test_acc, test_loss \
             = statedict_evaluate(path, evaluator, cuda, update_buffers)
-        res_list.append((train_acc, train_loss, test_acc, test_loss))
-    print('done')
+        res = [train_acc, train_loss, test_acc, test_loss]
+        res_list.append(res)
+        
+        prog = '{}/{}'.format(i+1, len(src_path_list))
+        record = ['{:>12.4f}'.format(r) for r in res]
+        record = '{:^12s}'.format(prog) + ''.join(record) + '\n'
+        if dest_path is not None:
+            with open(dest_path, 'a') as file:
+                file.write(record)
+        else:
+            sys.stdout.write(record)
     
     return res_list
                   
 
 
 def param_load_from_checkpoint(src_path, swa=False, cuda=False, template=None):
+    '''load checkpoint and translate into numpy array, 
+        will generate a StateDictWrapper template if not given'''
     
     key = 'state_dict' if not swa else 'swa_state_dict'
     configs = {'map_location': lambda storage, loc: storage} if not cuda else {}
@@ -148,7 +177,10 @@ def param_load_from_checkpoint(src_path, swa=False, cuda=False, template=None):
     return param, template
     
 
+    
 def param_batchload_from_checkpoints(src_path_list, swa=False, cuda=False, template=None):
+    '''load batch checkpoints and translate into numpy arrays, 
+        will generate a StateDictWrapper template if not given'''
     
     param_list = []
     for i, path in enumerate(src_path_list):
@@ -162,7 +194,9 @@ def param_batchload_from_checkpoints(src_path_list, swa=False, cuda=False, templ
     return param_list, template
 
 
+
 def param_save_as_statedict(template, param, dest_path, cuda=False):
+    '''translate numpy array into state dict and save'''
     
     state_dict = template.transform_to_state_dict(param, cuda)
     torch.save(state_dict, dest_path)
@@ -170,7 +204,9 @@ def param_save_as_statedict(template, param, dest_path, cuda=False):
     return
 
 
+
 def param_batchsave_as_statedicts(template, param_list, dest_path_list, cuda=False):
+    '''translate batch of numpy arrays into state dicts and save'''
     
     for i, (param, path) in enumerate(zip(param_list, dest_path_list)):
         print('\rtranslating and saving {}/{}...'\
