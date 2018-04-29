@@ -131,24 +131,36 @@ def perform_direction_scan(srcdir_path, destdir_path,
 def prepare_line_scan(swa_src_path, sgd_src_path, 
                       destdir_path, distgrid, 
                       cuda=False, template=None):
-    '''run this in local'''
+    '''read in a SWA model and a SGD model, 
+        create the grid for the line connecting the two models in the parameter space, 
+        put the results in state dict format and save them in a structured directory.
+
+        designed to RUN IN LOCAL (turn cuda off)
+    '''
     
+    # check if the output directiory already exists
+    # this prevents overwriting
     if os.path.exists(destdir_path):
         raise ValueError('output directory already exists')
     else:
         os.mkdir(destdir_path)
     
+    # record the distance grid 
     np.save(os.path.join(destdir_path, 'distgrid.npy'), distgrid)
     
+    # load the source models
     param_swa, template = param_load_from_checkpoint(swa_src_path, True, cuda, template)
     param_sgd, template = param_load_from_checkpoint(sgd_src_path, False, cuda, template)  
     
+    # generate a line connecting from SWA model to SGD model, generate a grid on this line 
     line = Line.from_AB(param_swa, param_sgd)
     new_params = line.spread(distgrid)
     
+    # prepare corresponding filenames 
     fname_list = ['linescan_point_{ipt}'.format(ipt=i) for i in range(len(distgrid))]
     fpath_list = [os.path.join(destdir_path, fname) for fname in fname_list]
 
+    # save the grid
     param_batchsave_as_statedicts(template, new_params, fpath_list)
 
     return destdir_path
@@ -158,18 +170,28 @@ def prepare_line_scan(swa_src_path, sgd_src_path,
 def perform_line_scan(srcdir_path, destdir_path, 
                       model, dataset, dataset_path, 
                       cuda=True, update_buffers=True):
-    '''run this on hub'''
+    '''read in the prepared line scan files and the dataset, 
+        make evaluation in order, 
+        save the results (train_acc, train_loss, test_acc, test_loss) in .npy files.
+
+        designed to RUN ON HUB (turn cuda on)
+    '''
     
+    # check if the output directiory already exists
+    # this prevents overwriting
     if os.path.exists(destdir_path):
         raise ValueError('output directory already exists')
     else:
         os.mkdir(destdir_path)
-        
+    
+    # create a help file
     with open(os.path.join(destdir_path, 'info.txt'), 'w') as file:
         file.write('train_acc, train_loss, test_acc, test_loss\n')
-        
+    
+    # initialize model and dataset  
     evaluator = ModelEvaluator(model, dataset, dataset_path)
     
+    # prepare line scan grid points in order
     f_list = os.listdir(srcdir_path)
     f_list = [fname for fname in f_list if fname.startswith('linescan')]
     igrid_list = [int(fname.rpartition('_')[2]) for fname in f_list]
@@ -177,12 +199,13 @@ def perform_line_scan(srcdir_path, destdir_path,
     ordered = sorted(zip(igrid_list, fpath_list), key=lambda x:x[0])
     igrid_list = [x[0] for x in ordered]
     fpath_list = [x[1] for x in ordered]
-        
     print('order check: {}'.format(igrid_list), end='\n\n')
-        
+    
+    # batch evaluation
     res_list = statedict_batchevaluate(fpath_list, evaluator, cuda, update_buffers, dest_path=None) # printout process
     res_list = np.array(res_list) # shape (ngrid, 4)
-        
+    
+    # save the results 
     outpath = os.path.join(destdir_path, 'linescan.npy')
     np.save(outpath, res_list)
     
