@@ -10,6 +10,7 @@ import utils
 import tabulate
 
 
+# Read model settings from command line arguments 
 parser = argparse.ArgumentParser(description='SGD/SWA training')
 parser.add_argument('--dir', type=str, default=None, required=True, help='training directory (default: None)')
 
@@ -41,19 +42,23 @@ parser.add_argument('--seed', type=int, default=1, metavar='S', help='random see
 
 args = parser.parse_args()
 
+# Prepare training directory 
 print('Preparing directory %s' % args.dir)
 os.makedirs(args.dir, exist_ok=True)
 with open(os.path.join(args.dir, 'command.sh'), 'w') as f:
     f.write(' '.join(sys.argv))
     f.write('\n')
 
+# Set torch backends and random seeds
 torch.backends.cudnn.benchmark = True
 torch.manual_seed(args.seed)
 torch.cuda.manual_seed(args.seed)
 
+# Choose model 
 print('Using model %s' % args.model)
 model_cfg = getattr(models, args.model)
 
+# Prepare training and test sets 
 print('Loading dataset %s from %s' % (args.dataset, args.data_path))
 ds = getattr(torchvision.datasets, args.dataset)
 path = os.path.join(args.data_path, args.dataset.lower())
@@ -77,11 +82,13 @@ loaders = {
 }
 num_classes = max(train_set.train_labels) + 1
 
+# Prepare model 
 print('Preparing model')
 model = model_cfg.base(*model_cfg.args, num_classes=num_classes, **model_cfg.kwargs)
 model.cuda()
 
 
+# Set up a separate model for swa training if using swa 
 if args.swa:
     print('SWA training')
     swa_model = model_cfg.base(*model_cfg.args, num_classes=num_classes, **model_cfg.kwargs)
@@ -91,6 +98,10 @@ else:
     print('SGD training')
 
 
+# Annealed learning rate schedule:
+#   1) fix lr to lr_init for the first half of epochs (or epochs before swa_start if using swa) 
+#   2) linearly decrease lr to 0.01*lr_init for the next 40% of epochs (or decrease to swa_lr if using swa)
+#   3) remain constant for the last 10% of epochs (or epochs before swa_start if using swa) 
 def schedule(epoch):
     t = (epoch) / (args.swa_start if args.swa else args.epochs)
     lr_ratio = args.swa_lr / args.lr_init if args.swa else 0.01
@@ -103,6 +114,7 @@ def schedule(epoch):
     return args.lr_init * factor
 
 
+# Set loss criterion and optimizer 
 criterion = F.cross_entropy
 optimizer = torch.optim.SGD(
     model.parameters(),
@@ -111,6 +123,7 @@ optimizer = torch.optim.SGD(
     weight_decay=args.wd
 )
 
+# Load previous model if resume mode is on 
 start_epoch = 0
 if args.resume is not None:
     print('Resume training from %s' % args.resume)
@@ -126,11 +139,13 @@ if args.resume is not None:
         if swa_n_ckpt is not None:
             swa_n = swa_n_ckpt
 
+# Prepare output headers 
 columns = ['ep', 'lr', 'tr_loss', 'tr_acc', 'te_loss', 'te_acc', 'time']
 if args.swa:
     columns = columns[:-1] + ['swa_te_loss', 'swa_te_acc'] + columns[-1:]
     swa_res = {'loss': None, 'accuracy': None}
 
+# Save current model 
 utils.save_checkpoint(
     args.dir,
     start_epoch,
@@ -140,26 +155,41 @@ utils.save_checkpoint(
     optimizer=optimizer.state_dict()
 )
 
+# Start training 
 for epoch in range(start_epoch, args.epochs):
-    time_ep = time.time()
+    
+    # Start timer 
+    time_ep = time.time()  
 
+    # Schedule learning rate 
     lr = schedule(epoch)
     utils.adjust_learning_rate(optimizer, lr)
+
+    # Loop over training set to train the model using SGD, return train loss and accuracy  
     train_res = utils.train_epoch(loaders['train'], model, criterion, optimizer)
+
+    # Evaluate SGD model on the training set once per eval_freq epochs, and at the first and last epochs 
     if epoch == 0 or epoch % args.eval_freq == args.eval_freq - 1 or epoch == args.epochs - 1:
         test_res = utils.eval(loaders['test'], model, criterion)
     else:
         test_res = {'loss': None, 'accuracy': None}
 
+    # Perform SWA: 
+    #   Collect models once every swa_c_epochs after swa_start 
     if args.swa and (epoch + 1) >= args.swa_start and (epoch + 1 - args.swa_start) % args.swa_c_epochs == 0:
+        
+        # Update averaged model 
         utils.moving_average(swa_model, model, 1.0 / (swa_n + 1))
         swa_n += 1
+        
+        # Evaluate SWA model on the training set once per eval_freq epochs, and at the first and last epochs 
         if epoch == 0 or epoch % args.eval_freq == args.eval_freq - 1 or epoch == args.epochs - 1:
             utils.bn_update(loaders['train'], swa_model)
             swa_res = utils.eval(loaders['test'], swa_model, criterion)
         else:
             swa_res = {'loss': None, 'accuracy': None}
 
+    # Save current model once per save_freq epochs 
     if (epoch + 1) % args.save_freq == 0:
         utils.save_checkpoint(
             args.dir,
@@ -170,7 +200,10 @@ for epoch in range(start_epoch, args.epochs):
             optimizer=optimizer.state_dict()
         )
 
+    # End timer 
     time_ep = time.time() - time_ep
+    
+    # Print results 
     values = [epoch + 1, lr, train_res['loss'], train_res['accuracy'], test_res['loss'], test_res['accuracy'], time_ep]
     if args.swa:
         values = values[:-1] + [swa_res['loss'], swa_res['accuracy']] + values[-1:]
@@ -182,6 +215,7 @@ for epoch in range(start_epoch, args.epochs):
         table = table.split('\n')[2]
     print(table)
 
+# Save the last model if not previously saved during training 
 if args.epochs % args.save_freq != 0:
     utils.save_checkpoint(
         args.dir,
