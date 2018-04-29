@@ -55,7 +55,6 @@ def prepare_direction_scan(src_path, destdir_path,
 
 
 
-
 def perform_direction_scan(srcdir_path, destdir_path, 
                            model, dataset, dataset_path, 
                            cuda=True, update_buffers=True):
@@ -101,6 +100,69 @@ def perform_direction_scan(srcdir_path, destdir_path,
         np.save(outpath, res_list)
         
         print(end='\n\n')
+    
+    return destdir_path
+
+
+
+
+def prepare_line_scan(swa_src_path, sgd_src_path, 
+                      destdir_path, distgrid, 
+                      cuda=False, template=None):
+    '''run this in local'''
+    
+    if os.path.exists(destdir_path):
+        raise ValueError('output directory already exists')
+    else:
+        os.mkdir(destdir_path)
+    
+    np.save(os.path.join(destdir_path, 'distgrid.npy'), distgrid)
+    
+    param_swa, template = param_load_from_checkpoint(swa_src_path, True, cuda, template)
+    param_sgd, template = param_load_from_checkpoint(sgd_src_path, False, cuda, template)  
+    
+    line = Line.from_AB(param_swa, param_sgd)
+    new_params = line.spread(distgrid)
+    
+    fname_list = ['linescan_point_{ipt}'.format(ipt=i) for i in range(len(distgrid))]
+    fpath_list = [os.path.join(destdir_path, fname) for fname in fname_list]
+
+    param_batchsave_as_statedicts(template, new_params, fpath_list)
+
+    return destdir_path
+
+
+
+def perform_line_scan(srcdir_path, destdir_path, 
+                      model, dataset, dataset_path, 
+                      cuda=True, update_buffers=True):
+    '''run this on hub'''
+    
+    if os.path.exists(destdir_path):
+        raise ValueError('output directory already exists')
+    else:
+        os.mkdir(destdir_path)
+        
+    with open(os.path.join(destdir_path, 'info.txt'), 'w') as file:
+        file.write('train_acc, train_loss, test_acc, test_loss\n')
+        
+    evaluator = ModelEvaluator(model, dataset, dataset_path)
+    
+    f_list = os.listdir(srcdir_path)
+    f_list = [fname for fname in f_list if fname.startswith('linescan')]
+    igrid_list = [int(fname.rpartition('_')[2]) for fname in f_list]
+    fpath_list = [os.path.join(srcdir_path, fname) for fname in f_list]
+    ordered = sorted(zip(igrid_list, fpath_list), key=lambda x:x[0])
+    igrid_list = [x[0] for x in ordered]
+    fpath_list = [x[1] for x in ordered]
+        
+    print('order check: {}'.format(igrid_list), end='\n\n')
+        
+    res_list = statedict_batchevaluate(fpath_list, evaluator, cuda, update_buffers, dest_path=None) # printout process
+    res_list = np.array(res_list) # shape (ngrid, 4)
+        
+    outpath = os.path.join(destdir_path, 'linescan.npy')
+    np.save(outpath, res_list)
     
     return destdir_path
 
@@ -184,7 +246,7 @@ def param_batchload_from_checkpoints(src_path_list, swa=False, cuda=False, templ
     
     param_list = []
     for i, path in enumerate(src_path_list):
-        print('\rloading and tranlating {}/{}...'\
+        print('\rloading and translating {}/{}...'\
                   .format(i+1, len(src_path_list)), end='')
         checkpt = torch.load(path, **configs)
         param, template = param_load_from_checkpoint(path, swa, cuda, template)

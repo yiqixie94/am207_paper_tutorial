@@ -30,6 +30,13 @@ class Line:
     def proj(self, V):
         return np.dot(self.ex, V - self.A)
 
+    def spread(self, distgrid):
+        new_params = []
+        for t in distgrid:
+            param = self.A + t * self.ex
+            new_params.append(param)
+        return new_params
+
 
 class Plane:
     
