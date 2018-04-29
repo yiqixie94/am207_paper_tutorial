@@ -1,6 +1,6 @@
 '''
-helper functions for experiment formulation and analysis
-author: Yiqi Xie
+helper functions for experiment formulation
+author: Yiqi Xie, Rui Fang
 '''
 
 import os
@@ -17,19 +17,29 @@ from parameter_space import Line, Plane, DimReducedMesh, RandomDirections
 def prepare_direction_scan(src_path, destdir_path, 
                            direction_path, distgrid, 
                            swa=False, cuda=False, template=None):
-    '''run this in local'''
+    '''read in a model and several directions in the parameter space, 
+        create the grid for rays from this model towards those directions,
+        put the results in state dict format and save them in a structured directory.
+
+        designed to RUN IN LOCAL (turn cuda off)
+    '''
     
+    # the naming format for outputs
     dname_fmt='dirscan_direction_{idir}'
     fname_fmt='dirscan_direction_{idir}_point_{ipt}'
 
+    # check if the output directiory already exists
+    # this prevents overwriting
     if os.path.exists(destdir_path):
         raise ValueError('output directory already exists')
     else:
         os.mkdir(destdir_path)
 
+    # create some help files recording the information of this scan
     shutil.copy2(direction_path, os.path.join(destdir_path, 'directions.npy'))
     np.save(os.path.join(destdir_path, 'distgrid.npy'), distgrid)
 
+    # load the source model and the directions
     center, template = param_load_from_checkpoint(src_path, swa, cuda, template)
     random_directions = RandomDirections.from_npy(direction_path)
 
@@ -38,15 +48,17 @@ def prepare_direction_scan(src_path, destdir_path,
         print('preparing for the {}/{}-th direction...'\
                 .format(i+1, random_directions.n))
 
+        # generate a grid for one direction
         new_params = random_directions.spread(center, i, distgrid)
 
+        # prepare the directory and corresponding namings
         dname = dname_fmt.format(idir=i)
         dpath = os.path.join(destdir_path, dname)
         os.mkdir(dpath)
-
         fname_list = [fname_fmt.format(idir=i, ipt=j) for j in range(len(distgrid))]
         fpath_list = [os.path.join(dpath, fname) for fname in fname_list]
 
+        # save the grid
         param_batchsave_as_statedicts(template, new_params, fpath_list)
 
         print()
@@ -58,18 +70,26 @@ def prepare_direction_scan(src_path, destdir_path,
 def perform_direction_scan(srcdir_path, destdir_path, 
                            model, dataset, dataset_path, 
                            cuda=True, update_buffers=True):
-    '''run this on hub'''
+    '''read in the prepared direction scan files and the dataset, 
+        make evaluation in order, 
+        save the results (train_acc, train_loss, test_acc, test_loss) in .npy files.
+
+        designed to RUN ON HUB (turn cuda on)
+    '''
     
+    # check if the output directiory already exists
+    # this prevents overwriting
     if os.path.exists(destdir_path):
         raise ValueError('output directory already exists')
     else:
         os.mkdir(destdir_path)
-        
+
+    # create a help file
     with open(os.path.join(destdir_path, 'info.txt'), 'w') as file:
         file.write('train_acc, train_loss, test_acc, test_loss\n')
-        
-    evaluator = ModelEvaluator(model, dataset, dataset_path)
     
+    # initializations
+    evaluator = ModelEvaluator(model, dataset, dataset_path)
     subdir_list = os.listdir(srcdir_path)
     subdir_list = [dname for dname in subdir_list if dname.startswith('dirscan')]
     subdir_path_list = [os.path.join(srcdir_path, dname) for dname in subdir_list]
@@ -82,6 +102,7 @@ def perform_direction_scan(srcdir_path, destdir_path,
         print('processing the {}/{}-th direction...'\
                   .format(i+1, len(subdir_path_list)))
         
+        # check grids of one direction and prepare them in order
         f_list = os.listdir(subdir_path)
         f_list = [fname for fname in f_list if fname.startswith('dirscan')]
         igrid_list = [int(fname.rpartition('_')[2]) for fname in f_list]
@@ -89,12 +110,13 @@ def perform_direction_scan(srcdir_path, destdir_path,
         ordered = sorted(zip(igrid_list, fpath_list), key=lambda x:x[0])
         igrid_list = [x[0] for x in ordered]
         fpath_list = [x[1] for x in ordered]
-        
         print('order check: {}'.format(igrid_list), end='\n\n')
         
+        # batch evaluation
         res_list = statedict_batchevaluate(fpath_list, evaluator, cuda, update_buffers, dest_path=None) # printout process
         res_list = np.array(res_list) # shape (ngrid, 4)
         
+        # save the results
         i_direction = subdir_path.rpartition('_')[2]
         outpath = os.path.join(destdir_path, 'dirscan_direction_{idir}.npy'.format(idir=i_direction))
         np.save(outpath, res_list)
@@ -170,6 +192,7 @@ def perform_line_scan(srcdir_path, destdir_path,
 
 
 def statedict_load(src_path, cuda=False):
+    '''load single state dict from file'''
     
     configs = {'map_location': lambda storage, loc: storage} if not cuda else {}
     state_dict = torch.load(src_path, **configs)
